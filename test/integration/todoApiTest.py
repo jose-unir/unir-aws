@@ -10,7 +10,7 @@ import pytest
 BASE_URL = os.environ.get("BASE_URL")
 #BASE_URL = "https://m0qwfec693.execute-api.us-east-1.amazonaws.com/Prod"
 DEFAULT_TIMEOUT = 2  # in secs
-
+print(BASE_URL)
 
 @pytest.mark.api
 class TestApi(unittest.TestCase):
@@ -19,6 +19,7 @@ class TestApi(unittest.TestCase):
         self.assertIsNotNone(BASE_URL, "URL no configurada")
         self.assertTrue(len(BASE_URL) > 8, "URL no configurada")
 
+    @pytest.mark.read_only
     def test_api_listtodos(self):
         print('---------------------------------------')
         print('Starting - integration test List TODO')
@@ -74,6 +75,8 @@ class TestApi(unittest.TestCase):
             response.status_code, 200, "Error en la petición API a {url}"
         )
         print('End - integration test Add TODO')
+        
+    @pytest.mark.read_only    
     def test_api_gettodo(self):
         print('---------------------------------------')
         print('Starting - integration test Get TODO')
