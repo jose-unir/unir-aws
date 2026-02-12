@@ -132,7 +132,7 @@ pipeline {
                     git fetch origin
                     git checkout master
                     git pull origin master
-                    git merge origin/develop --no-ff --no-commit
+                    git merge origin/develop --no-ff --no-commit || true
                     git checkout --ours Jenkinsfile_agentes
                     git add Jenkinsfile_agentes
                     git commit -m "Merge develop into master keeping master Jenkinsfile_agentes"
