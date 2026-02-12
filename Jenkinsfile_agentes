@@ -1,1 +1,72 @@
+pipeline {
+    agent none
 
+    stages {
+
+        stage('Get Code') {
+            agent any
+            steps {
+                sh '''
+                whoami
+                hostname
+                echo "${WORKSPACE}"
+                '''
+                git branch: 'master', url: 'https://github.com/jose-unir/unir-aws.git'
+                stash name: 'source-code', includes: '**/*'
+            }
+        }
+
+        stage('Deploy') {
+            agent any
+            steps {
+                unstash 'source-code'
+
+                sh '''
+                whoami
+                hostname
+                echo "${WORKSPACE}"
+                sam build
+                sam validate --region us-east-1
+                sam deploy --config-env production --region us-east-1 --no-fail-on-empty-changeset
+                '''
+            }
+        }
+
+        stage('Rest') {
+            agent { label 'agente-rest' }
+
+            steps {
+                unstash 'source-code'
+
+                sh '''
+                python3 -m venv venv
+                . venv/bin/activate
+                pip install --upgrade pip
+                pip install -r src/requirements.txt
+
+                export BASE_URL=$(aws cloudformation describe-stacks \
+                    --stack-name todo-list-aws-production \
+                    --query 'Stacks[0].Outputs[?OutputKey==`BaseUrlApi`].OutputValue' \
+                    --region us-east-1 \
+                    --output text)
+
+                echo "API_URL obtenida: $BASE_URL"
+
+                pytest test/integration/todoApiTest.py \
+                    -m read_only \
+                    -q \
+                    --tb=short \
+                    --disable-warnings \
+                    --maxfail=1 \
+                    --junitxml=pytest-results.xml
+                '''
+            }
+
+            post {
+                always {
+                    junit 'pytest-results.xml'
+                }
+            }
+        }
+    }
+}
