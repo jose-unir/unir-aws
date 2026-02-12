@@ -100,9 +100,10 @@ pipeline {
                 sh '''
                 git config user.name "${GIT_USERNAME}"
                 git remote set-url origin https://${GIT_USERNAME}:${GIT_TOKEN}@github.com/jose-unir/unir-aws.git
-                git fetch origin
-                git pull origin master
-                git merge origin/develop --no-ff --no-commit "Stopping merge before commit"
+                git fetch origin master
+                git checkout master
+                git reset --hard origin/master
+                git merge origin/develop --no-ff --no-commit || true
                 git checkout --ours Jenkinsfile
                 git add Jenkinsfile
                 git commit -m "Merge develop into master keeping master Jenkinsfile"
