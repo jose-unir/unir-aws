@@ -1,36 +1,96 @@
 pipeline {
-    agent none
+  agent none
 
-    stages {
+  stages {
+      
+    stage('Get Code') {
+      agent any
+      steps {
+        sh '''
+          whoami
+          hostname
+          echo "${WORKSPACE}"
+        '''
+        git branch: 'develop', url: 'https://github.com/jose-unir/unir-aws.git'
+        stash name: 'source-code', includes: '**/*'
+      }
+    }
 
-        stage('Get Code') {
-            agent any
-            steps {
-                sh '''
-                whoami
-                hostname
-                echo "${WORKSPACE}"
-                '''
-                git branch: 'master', url: 'https://github.com/jose-unir/unir-aws.git'
-                stash name: 'source-code', includes: '**/*'
-            }
+    stage('Static') {
+      agent { label 'agente-linter' }
+      steps {
+        unstash 'source-code'
+
+        sh '''
+          whoami
+          hostname
+          echo "${WORKSPACE}"
+          flake8 --exit-zero --format=pylint src > flake8.out || true
+          ls -l flake8.out
+        '''
+
+        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+          recordIssues(
+            id: 'flake8',
+            qualityGates: [
+              [type: 'TOTAL', threshold: 8,  criticality: 'UNSTABLE'],
+              [type: 'TOTAL', threshold: 10, criticality: 'FAILURE']
+            ],
+            sourceCodeRetention: 'LAST_BUILD',
+            tools: [pyLint(pattern: 'flake8.out')],
+            enabledForFailure: true
+          )
         }
+      }
+    }
 
-        stage('Deploy') {
-            agent any
-            steps {
-                unstash 'source-code'
+    stage('Security') {
+      agent { label 'agente-linter' }
+      steps {
+        unstash 'source-code'
 
-                sh '''
-                whoami
-                hostname
-                echo "${WORKSPACE}"
-                sam build
-                sam validate --region us-east-1
-                sam deploy --config-env production --region us-east-1 --no-fail-on-empty-changeset
-                '''
-            }
+        sh '''
+          whoami
+          hostname
+          echo "${WORKSPACE}"
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install --upgrade pip
+          pip install bandit
+          bandit -r src -f json -o bandit.json || true
+          ls -l bandit.json
+        '''
+
+        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+          recordIssues(
+            id: 'bandit',
+            qualityGates: [
+              [type: 'TOTAL', threshold: 2, criticality: 'UNSTABLE'],
+              [type: 'TOTAL', threshold: 4, criticality: 'FAILURE']
+            ],
+            sourceCodeRetention: 'LAST_BUILD',
+            tools: [pyLint(pattern: 'bandit.json')],
+            enabledForFailure: true
+          )
         }
+      }
+    }
+
+    stage('Deploy') {
+      agent any
+      steps {
+        unstash 'source-code'
+
+        sh '''
+          whoami
+          hostname
+          echo "${WORKSPACE}"
+          sam build
+          sam validate --region us-east-1
+          sam deploy --config-env staging --region us-east-1 --no-fail-on-empty-changeset
+        '''
+      }
+    }
 
         stage('Rest') {
             agent { label 'agente-rest' }
@@ -43,28 +103,41 @@ pipeline {
                 . venv/bin/activate
                 pip install --upgrade pip
                 pip install -r src/requirements.txt
-
                 export BASE_URL=$(aws cloudformation describe-stacks \
-                    --stack-name todo-list-aws-production \
+                    --stack-name todo-list-aws-staging \
                     --query 'Stacks[0].Outputs[?OutputKey==`BaseUrlApi`].OutputValue' \
                     --region us-east-1 \
                     --output text)
-
                 echo "API_URL obtenida: $BASE_URL"
-
-                pytest test/integration/todoApiTest.py \
-                    -m read_only \
-                    -q \
-                    --tb=short \
-                    --disable-warnings \
-                    --maxfail=1 \
-                    --junitxml=pytest-results.xml
+                pytest -q test/integration/todoApiTest.py --junitxml=pytest-results.xml
                 '''
             }
 
             post {
                 always {
                     junit 'pytest-results.xml'
+                }
+            }
+        }
+
+        stage('Promote') {
+            agent any
+            steps {
+                unstash 'source-code'
+
+                withCredentials([usernamePassword(credentialsId: 'git-jose', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_TOKEN')]) {
+                    sh '''
+                    git config user.name "${GIT_USERNAME}"
+                    git remote set-url origin https://${GIT_USERNAME}:${GIT_TOKEN}@github.com/jose-unir/unir-aws.git
+                    git fetch origin
+                    git checkout master
+                    git pull origin master
+                    git merge origin/develop --no-ff --no-commit || true
+                    git checkout --ours Jenkinsfile_agentes
+                    git add Jenkinsfile_agentes
+                    git commit -m "Merge develop into master keeping master Jenkinsfile_agentes"
+                    git push origin master
+                    '''
                 }
             }
         }
